@@ -8,6 +8,5 @@
     "https://www.googleapis.com/auth/gmail.modify",
     "openid",
     "email"
-  ],
-  "licenseApiUrl": "https://YOUR-WIX-DOMAIN/_functions/license"
+  ]
 }
