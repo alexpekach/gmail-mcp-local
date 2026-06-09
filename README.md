@@ -1,144 +1,91 @@
-# gmail-mcp-local — local-first v1 (custody seam)
+# gmail-mcp-local
 
-This package is the **local-first Gmail MCP v1** in progress: a runnable **stdio MCP server**
-built on the **custody seam** and the **PKCE + loopback connect flow** that feeds it. It is a
-**new, isolated** package — the working prototype under `../functions/gmail_mcp/` is
-**untouched**. No deploy; tests run with zero native deps and never touch a live Google
-endpoint or a browser (all I/O is injected).
+![local-first](https://img.shields.io/badge/local--first-yes-2ea44f)
+![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)
+![MCP](https://img.shields.io/badge/MCP-server-4b8bbe)
+![tests](https://img.shields.io/badge/tests-82%20passing-2ea44f)
+![license](https://img.shields.io/badge/license-MIT-lightgrey)
 
-## Why this exists (the seam)
+**Your Gmail, inside Claude & Cursor — without handing your inbox to a server.**
 
-In the prototype, `tokenFor()` (`functions/gmail_mcp/lib/tools.js:90`) is the single
-chokepoint every one of the 19 Gmail tools routes through. It does two custody things:
-resolve a refresh token and mint a short-lived access token — both hard-wired to the
-Catalyst Data Store (`google.js:116`).
+A local-first [MCP](https://modelcontextprotocol.io) server that lets AI assistants (Claude Desktop, Cursor, VS Code, …) search, read, label, draft, and send your Gmail. Your Google login (OAuth refresh token) is stored in **your operating system's keychain** and **never leaves your machine** — there is no cloud service in the middle, not even ours.
 
-The seam hoists exactly those two concerns behind a `CustodyProvider` interface so the
-tools become **custody-agnostic**. Swapping where keys live becomes a provider swap, not
-a rewrite. This is what lets v1 ship **local-first** and grow into the deferred **Team
-tier** without re-touching tool code (plan §1.H).
+## Why
 
-## What's here
+- 🔒 **Private by design.** Mail and tokens stay on your device. There is no server that ever sees your email — so no operator (including us) *can* read it.
+- 🧩 **Cross-client.** One install serves Claude Desktop, Cursor, VS Code, Windsurf.
+- 📬 **Multi-account.** Connect personal + work Gmail, tag them, pick per request.
+- 🛠️ **20 tools.** The full read/write/organize Gmail toolkit (below).
 
-```
-src/
-  custody/
-    provider.js              CustodyProvider interface + error types
-    localKeychainProvider.js  v1 — refresh token in the OS keychain, never leaves the device
-    serverBrokerProvider.js   DEFERRED stub — gated on a funded Team customer (plan Part 1-D/§1.D.8)
-    index.js                 createCustodyProvider(kind, config) factory
-  keychain/
-    backend.js               KeychainBackend interface
-    memoryKeychainBackend.js  in-memory (tests / CI)
-    osKeychainBackend.js      macOS Keychain / Windows Cred Manager / libsecret (optional native dep)
-  metadata/
-    store.js                 non-secret metadata; whitelists fields so a token CANNOT leak to disk
-  oauth/
-    pkce.js                  RFC 7636 PKCE pair + state (CSRF guard)
-    google.js                buildAuthUrl / exchangeCodeForTokens / refreshAccessToken / userinfo (injectable HTTP)
-    loopbackServer.js        ephemeral 127.0.0.1 redirect catcher (RFC 8252)
-    openBrowser.js           default system-browser opener (injectable)
-    connect.js               connectAccount() — orchestrates PKCE+loopback → custody.putRefreshToken()
-  gmail/
-    client.js                Gmail REST client (get/post/patch/del + grantedScopes; injectable HTTP)
-    parse.js                 message header/body parsing (ported from the prototype)
-    mime.js                  RFC 2822 message builder + reply-threading (ported from the prototype)
-  mcp/
-    server.js                JSON-RPC dispatch: initialize / tools/list / tools/call / ping
-    transport.js             stdio transport — newline-delimited JSON-RPC (streams injectable)
-    tools.js                 all 20 tools, each routed through tokenFor(ref, { custody })
-  tokenFor.js                the custody-agnostic chokepoint
-  index.js                   createGoogleLocalCustody() — convenience wiring (OS keychain + Google refresh)
-bin/
-  gmail-mcp-local.js         the stdio MCP server entrypoint (npm start)
-test/
-  custody · pkce · oauth · loopback · connect · mcp · transport · gmailtools · openbrowser · mime · client · tools-write   (67 tests)
+## Quick start
+
+**Prereqs:** Node 20+, a desktop MCP client, and a Google **Desktop-app** OAuth client id + secret (free — 5-minute setup in [SETUP_LIVE.md](./SETUP_LIVE.md)).
+
+```bash
+npx github:alexpekach/gmail-mcp-local      # or grab the installer from Releases
+npm i @napi-rs/keyring                     # OS keychain backend (one time)
 ```
 
-## Connect flow (PKCE + loopback, public client)
-
-```js
-const { createGoogleLocalCustody } = require('./src');
-const gc = createGoogleLocalCustody({ clientId: GOOGLE_DESKTOP_CLIENT_ID, metadataPath });
-await gc.connect({ ref: 'work', tag: 'work' }); // opens browser → 127.0.0.1 redirect → keychain
-const accessToken = await gc.token('work');      // minted from the keychain refresh token
-```
-
-PKCE protects against code interception. Google's **Desktop-app token endpoint nonetheless
-requires the client secret** at the exchange (verified live 2026-06-08), so you must set
-`GMAIL_MCP_CLIENT_SECRET`. That secret is **non-confidential**: an app-level value embedded in
-the distributed client (Google's installed-app model) — *not* a per-user secret and *never*
-stored on any server you operate. The loopback server binds 127.0.0.1 only.
-
-## Custody models
-
-| | LocalKeychainProvider (v1) | ServerBrokerProvider (deferred) |
-|---|---|---|
-| Refresh token lives | user's OS keychain | server-side vault |
-| Operator can read mail | **No** (structural) | Yes (custodian) |
-| Serves shared/offline mailboxes | No | Yes |
-| Status | ships in v1 | stub — throws; built only when a Team customer funds it |
-
-Native Gmail delegation was verified (2026-06-08) **not** to allow a delegate to access a
-shared mailbox via their own local token, so concurrently-shared mailboxes require the
-broker (or domain-wide delegation, which the plan rejects). See plan §1.H.
-
-## Security invariants (enforced by tests)
-
-- The refresh token is written **only** to the keychain backend, never to the metadata store.
-- The metadata store **whitelists** fields, so even a buggy caller cannot persist a token to disk.
-- `describe()` exposes each model's trust properties (`mailExposedToOperator`, `tokenLeavesDevice`).
-- The broker stub **throws** on every data method — no server custody can sneak into v1.
-- The connect flow sends the **PKCE verifier** plus the non-confidential desktop client secret
-  Google's token endpoint requires; the loopback catcher **rejects state mismatches** (CSRF) and
-  binds 127.0.0.1 only.
-
-## Built so far
-
-- Custody seam: `CustodyProvider` + `LocalKeychainProvider` + `ServerBrokerProvider` stub + `tokenFor`.
-- PKCE + loopback connect flow storing a real Google refresh token into the keychain.
-- **Runnable stdio MCP server** (JSON-RPC dispatch + transport) exposing **all 20 tools**, each
-  routed through the seam — account mgmt (`list_accounts`/`connect_account`/`remove_account`/`set_tag`),
-  read (`search_threads`/`get_thread`/`list_labels`/`list_thread_attachments`/`get_attachment`/`check_account_scopes`),
-  write (`create_draft`/`send_draft`/`send_message`), modify (`label_thread`/`label_message`/`create_label`/`update_label`/`delete_label`/`trash_thread`/`untrash_thread`).
-- **Verified live** (2026-06-08): connect → keychain → token refresh → real Gmail read against a live account.
-
-## Not yet built (follow-on v1 work, behind Phase 0)
-
-- Re-auth / scope-upgrade UX — the write/modify tools need a reconnect with `gmail.compose`/`gmail.modify`
-  (a read-only-validated account can't send/label until reconnected with broader scopes).
-- Desktop-client packaging/signing + publishing. See plan Part 1-L / Phase 1.
-- Production use needs Google **restricted-scope verification + CASA** (cheapest no-backend tier) — the Phase-0 gate.
-
-## Run as an MCP server (desktop clients)
-
-Add to your client's MCP config (Claude Desktop / Cursor / VS Code):
+Add to your MCP client config (Claude Desktop / Cursor):
 
 ```json
 {
   "mcpServers": {
     "gmail-local": {
       "command": "node",
-      "args": ["/abs/path/to/local-first/bin/gmail-mcp-local.js"],
-      "env": { "GMAIL_MCP_CLIENT_ID": "<your-google-desktop-app-client-id>" }
+      "args": ["<path>/bin/gmail-mcp-local.js"],
+      "env": {
+        "GMAIL_MCP_CLIENT_ID": "<your-desktop-client-id>.apps.googleusercontent.com",
+        "GMAIL_MCP_CLIENT_SECRET": "<non-confidential desktop secret>"
+      }
     }
   }
 }
 ```
 
-Then in the client: `connect_account({ ref: "work" })` opens your browser; after consent the
-refresh token lands in your OS keychain. `search_threads` / `get_thread` read mail — tokens and
-mail never leave the machine. Real on-device custody needs a keychain module
-(`npm i @napi-rs/keyring`) and a verified Google **Desktop-app** client id (Phase-0 gate). Set
-`GMAIL_MCP_SCOPES` to narrow scopes (default: readonly + compose + modify).
-
-**Full step-by-step → [SETUP_LIVE.md](./SETUP_LIVE.md)**: Google Cloud console setup + a
-one-command live connect test (`node scripts/connect-test.js <ref> [tag]`) that connects a real
-account and prints your latest threads — the Phase-0 go/no-go validation.
-
-## Tests
+Restart the client, then in chat:
 
 ```
-cd local-first
-npm test      # node --test — 67 tests, no native deps, no network, no browser
+connect_account({ ref: "work" })          # opens your browser; token lands in your keychain
+search_threads({ account: "work", query: "newer_than:7d has:attachment" })
+get_thread({ account: "work", thread_id: "…" })
 ```
+
+Prefer a one-click setup? Download the installer from [Releases](https://github.com/alexpekach/gmail-mcp-local/releases) and double-click `install.cmd` (Windows) or `install.command` (macOS).
+
+## What it can do (20 tools)
+
+| Group | Tools |
+|---|---|
+| Accounts | `list_accounts` · `connect_account` · `remove_account` · `set_tag` |
+| Read | `search_threads` · `get_thread` · `list_labels` · `list_thread_attachments` · `get_attachment` · `check_account_scopes` |
+| Write | `create_draft` · `send_draft` · `send_message` |
+| Organize | `label_thread` · `label_message` · `create_label` · `update_label` · `delete_label` · `trash_thread` · `untrash_thread` |
+
+## Privacy & security
+
+- **Tokens in the OS keychain** — macOS Keychain / Windows Credential Manager / Linux libsecret. Never written to disk in plaintext; never sent anywhere.
+- **PKCE + loopback OAuth** (RFC 8252) — a public client; the auth code is exchanged with a one-time verifier, not a network-shared secret.
+- **Local execution** — the server runs as a subprocess of your MCP client. No telemetry, no remote storage of mail or tokens.
+- **Least scope** — request only the Gmail scopes you need (read-only by default).
+- Restricted Gmail scopes mean your Google OAuth app must be **verified** (or in **Testing** with ≤100 users). See [SETUP_LIVE.md](./SETUP_LIVE.md).
+
+## How it works (30 seconds)
+
+Your client launches `gmail-mcp-local` as a local stdio subprocess → it runs Google OAuth in your browser → the refresh token is saved to your OS keychain → each tool call mints a short-lived access token and calls the Gmail API **directly from your machine**. A single `tokenFor()` chokepoint keeps every tool custody-agnostic, so the same code can later swap to a team/shared backend without touching tool logic.
+
+## Develop
+
+```bash
+npm test     # 82 tests — no network, no browser, no native deps
+```
+
+CommonJS, Node ≥ 20. Issues and PRs welcome.
+
+## Status
+
+**v0.1.0** — local-first core (20 tools) complete and tested; verified live (read + draft) against real Gmail. Roadmap: re-auth/scope-upgrade UX, signed installers, optional Pro features (shared team mailboxes via a funded backend).
+
+## License
+
+[MIT](./LICENSE) © Palmcraft Cabinets, LLC.

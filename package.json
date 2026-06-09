@@ -3,7 +3,7 @@
   "version": "0.1.0-seam",
   "private": true,
   "description": "Local-first Gmail MCP v1 — custody seam (CustodyProvider: LocalKeychainProvider + ServerBrokerProvider stub). The prototype under functions/gmail_mcp/ is untouched.",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "type": "commonjs",
   "engines": {
     "node": ">=20"
