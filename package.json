@@ -1,0 +1,36 @@
+{
+  "name": "@palmcraft/gmail-mcp-local",
+  "version": "0.1.0-seam",
+  "private": true,
+  "description": "Local-first Gmail MCP v1 — custody seam (CustodyProvider: LocalKeychainProvider + ServerBrokerProvider stub). The prototype under functions/gmail_mcp/ is untouched.",
+  "license": "UNLICENSED",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "gmail-mcp-local": "bin/gmail-mcp-local.js"
+  },
+  "scripts": {
+    "test": "node --test",
+    "start": "node bin/gmail-mcp-local.js",
+    "setup": "node scripts/install-into-client.js",
+    "connect": "node scripts/connect-test.js",
+    "build:installer": "node scripts/build-installer.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "scripts/",
+    "bundled-config.json",
+    "README.md",
+    "SETUP_LIVE.md",
+    "ONBOARDING-TESTER.md"
+  ],
+  "keywords": ["mcp", "model-context-protocol", "gmail", "local-first", "claude", "cursor"],
+  "repository": { "type": "git", "url": "REPLACE_WITH_YOUR_REPO_URL" },
+  "comment_optionalDependencies": "These native keychain modules are needed ONLY for real on-device custody (OsKeychainBackend). The seam and its tests use MemoryKeychainBackend and require neither. Install one for real use: npm i @napi-rs/keyring",
+  "optionalDependencies": {
+    "@napi-rs/keyring": "^1.3.0"
+  }
+}

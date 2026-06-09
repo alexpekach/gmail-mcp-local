@@ -1,0 +1,13 @@
+node_modules/
+*.bak
+dist/
+
+# Real bundled credentials — created from bundled-config.example.json at publish
+# time. Kept out of git by default (the desktop secret is non-confidential, but
+# don't commit it to a PUBLIC repo unless you've decided that's acceptable). It is
+# still included in the npm tarball via package.json "files".
+bundled-config.json
+
+# Local per-user state (should never be in the repo anyway; here for safety)
+.gmail-mcp-local/
+accounts.json
