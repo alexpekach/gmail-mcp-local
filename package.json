@@ -1,8 +1,8 @@
 {
-  "name": "@palmcraft/gmail-mcp-local",
+  "name": "@alepek/gmail-mcp-local",
   "version": "0.1.0-seam",
   "private": true,
-  "description": "Local-first Gmail MCP v1 — custody seam (CustodyProvider: LocalKeychainProvider + ServerBrokerProvider stub). The prototype under functions/gmail_mcp/ is untouched.",
+  "description": "Local-first Gmail MCP server for Claude & Cursor — Gmail tools with OAuth tokens that never leave your machine (stored in the OS keychain).",
   "license": "MIT",
   "type": "commonjs",
   "engines": {
