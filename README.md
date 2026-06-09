@@ -88,4 +88,4 @@ CommonJS, Node ≥ 20. Issues and PRs welcome.
 
 ## License
 
-[MIT](./LICENSE) © Palmcraft Cabinets, LLC.
+[MIT](./LICENSE) © ALEPEK Accounting and Consulting LLC.
