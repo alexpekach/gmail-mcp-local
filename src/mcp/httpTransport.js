@@ -53,6 +53,21 @@ function runHttpServer({ server, port = 0, host = '127.0.0.1', secret } = {}) {
       return;
     }
     if (req.method !== 'POST') {
+      // A human checking the URL in a browser gets an explanation; MCP clients
+      // (which never send Accept: text/html) get the spec-required 405 — the
+      // Streamable HTTP spec says GET must be SSE or 405, so this stays
+      // protocol-correct while being person-friendly.
+      const wantsHtml = String(req.headers.accept || '').includes('text/html');
+      if (req.method === 'GET' && wantsHtml) {
+        const page = '<!doctype html><title>gmail-mcp-local</title><body style="font-family:system-ui;max-width:40em;margin:4em auto">' +
+          '<h2>&#9989; gmail-mcp-local MCP endpoint is up</h2>' +
+          '<p>This URL speaks the MCP protocol (POST), so there is nothing to see in a browser &mdash; seeing this page means the server and tunnel are working.</p>' +
+          '<p>Paste this exact URL into <b>claude.ai &rarr; Settings &rarr; Connectors &rarr; Add custom connector</b>.</p>' +
+          '<p style="color:#777">Treat this URL like a password &mdash; the secret path is the only credential.</p></body>';
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(page);
+        return;
+      }
       res.writeHead(405, { Allow: 'POST' }).end();
       return;
     }
