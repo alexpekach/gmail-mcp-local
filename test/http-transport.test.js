@@ -84,9 +84,13 @@ test('http transport: wrong secret path → 404, wrong method → 405', async ()
     const bad = await fetch(h.url.replace('testsecret', 'WRONG'), { method: 'POST', body: '{}' });
     assert.strictEqual(bad.status, 404);
 
-    const get = await fetch(h.url);
+    const get = await fetch(h.url); // no text/html Accept → MCP-client path
     assert.strictEqual(get.status, 405);
     assert.strictEqual(get.headers.get('allow'), 'POST');
+
+    const browser = await fetch(h.url, { headers: { Accept: 'text/html,application/xhtml+xml' } });
+    assert.strictEqual(browser.status, 200);
+    assert.match(await browser.text(), /claude\.ai/);
   } finally {
     await h.close();
   }
