@@ -60,6 +60,39 @@ function main() {
   const deps = { custody: gc.provider, connect: gc.connect, gmail, licenseGate };
   const server = createMcpServer({ tools, deps, serverInfo: { name: 'gmail-mcp-local', version: pkg.version } });
 
+  // --http [port] / GMAIL_MCP_HTTP_PORT: serve MCP over Streamable HTTP instead
+  // of stdio, for remote clients (claude.ai custom connector via a tunnel).
+  // Custody is unchanged — tokens stay in THIS machine's keychain.
+  const httpFlag = process.argv.indexOf('--http');
+  if (httpFlag !== -1 || cfg.httpPort) {
+    const { runHttpServer, generateSecret } = require('../src/mcp/httpTransport');
+    const argPort = httpFlag !== -1 ? Number(process.argv[httpFlag + 1]) : NaN;
+    const port = Number.isFinite(argPort) ? argPort : (Number(cfg.httpPort) || 8765);
+
+    // The secret path prefix is the credential. Stable across restarts so the
+    // connector URL configured in claude.ai keeps working: env/config first,
+    // else generate once and persist next to accounts.json.
+    let secret = cfg.httpSecret;
+    if (!secret) {
+      const secretPath = path.join(path.dirname(cfg.metadataPath), 'http-secret');
+      try { secret = fs.readFileSync(secretPath, 'utf8').trim(); } catch (_) { /* first run */ }
+      if (!secret) {
+        secret = generateSecret();
+        fs.writeFileSync(secretPath, secret + '\n');
+      }
+    }
+
+    runHttpServer({ server, port, secret }).then(({ url }) => {
+      process.stderr.write(`[gmail-mcp-local] HTTP server ready (v${pkg.version}); ${tools.length} tools; metadata=${cfg.metadataPath}\n`);
+      process.stderr.write(`[gmail-mcp-local] endpoint: ${url}\n`);
+      process.stderr.write(`[gmail-mcp-local] expose it: cloudflared tunnel --url http://127.0.0.1:${port}  (then use https://<tunnel-host>${new URL(url).pathname} as the connector URL)\n`);
+    }).catch((e) => {
+      process.stderr.write(`[gmail-mcp-local] FATAL: HTTP listen failed: ${e.message}\n`);
+      process.exit(1);
+    });
+    return;
+  }
+
   process.stderr.write(`[gmail-mcp-local] stdio server ready (v${pkg.version}); ${tools.length} tools; metadata=${cfg.metadataPath}\n`);
   runStdioServer({ server }).then(() => process.exit(0));
 }
