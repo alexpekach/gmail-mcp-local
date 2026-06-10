@@ -26,7 +26,7 @@ Using it is two separate steps — **install the connector once**, then **add Gm
 ### Option A — Claude Desktop extension (`.mcpb`) · easiest
 
 1. Download `gmail-mcp-local-<version>.mcpb` from [Releases](https://github.com/alexpekach/gmail-mcp-local/releases).
-2. Double-click it (or drag it into Claude Desktop).
+2. In Claude Desktop, open **Settings → Extensions → Advanced settings → Install Extension…** and pick the file. (Double-clicking the `.mcpb` or dragging it into Claude Desktop may also work, but isn't reliable on every machine.)
 3. Paste your Google client id + secret when prompted — Claude Desktop stores the secret in your **OS keychain**.
 
 No terminal, no Node install, no config files. (Claude Desktop only; for Cursor use Option B.)
