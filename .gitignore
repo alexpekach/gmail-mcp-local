@@ -1,6 +1,7 @@
 node_modules/
 *.bak
 dist/
+*.mcpb
 
 # Real bundled credentials — created from bundled-config.example.json at publish
 # time. Kept out of git by default (the desktop secret is non-confidential, but
