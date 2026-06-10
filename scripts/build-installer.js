@@ -29,7 +29,7 @@ fs.rmSync(OUT, { recursive: true, force: true });
 fs.mkdirSync(APP, { recursive: true });
 
 // --- app payload (no node_modules / test / dist) ---
-const appItems = ['bin', 'src', 'scripts', 'package.json', 'README.md', 'SETUP_LIVE.md', 'ONBOARDING-TESTER.md'];
+const appItems = ['bin', 'src', 'scripts', 'package.json', 'README.md', 'SETUP_LIVE.md'];
 for (const item of appItems) {
   const s = path.join(ROOT, item);
   if (fs.existsSync(s)) fs.cpSync(s, path.join(APP, item), { recursive: true });
