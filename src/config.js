@@ -27,6 +27,8 @@ function mergeConfig(env = {}, file = {}) {
     licenseApiUrl: env.GMAIL_MCP_LICENSE_URL || file.licenseApiUrl || file.license_api_url || undefined,
     licenseKey: env.GMAIL_MCP_LICENSE_KEY || file.licenseKey || file.license_key || undefined,
     renewUrl: env.GMAIL_MCP_RENEW_URL || file.renewUrl || undefined,
+    httpPort: env.GMAIL_MCP_HTTP_PORT || file.httpPort || undefined,
+    httpSecret: env.GMAIL_MCP_HTTP_SECRET || file.httpSecret || undefined,
   };
 }
 

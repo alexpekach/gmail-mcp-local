@@ -3,7 +3,7 @@
 ![local-first](https://img.shields.io/badge/local--first-yes-2ea44f)
 ![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)
 ![MCP](https://img.shields.io/badge/MCP-server-4b8bbe)
-![tests](https://img.shields.io/badge/tests-89%20passing-2ea44f)
+![tests](https://img.shields.io/badge/tests-96%20passing-2ea44f)
 ![license](https://img.shields.io/badge/license-MIT-lightgrey)
 
 **Your Gmail, inside Claude & Cursor — without handing your inbox to a server.**
@@ -92,6 +92,22 @@ connect_account({ ref: "work" })
 
 Your client launches `gmail-mcp-local` as a local stdio subprocess → it runs Google OAuth in your browser → the refresh token is saved to your OS keychain → each tool call mints a short-lived access token and calls the Gmail API **directly from your machine**. A single `tokenFor()` chokepoint keeps every tool custody-agnostic, so the same code can later swap to a team/shared backend without touching tool logic.
 
+## Optional: use it from claude.ai / web / mobile (tunnel)
+
+The same server can speak MCP over **Streamable HTTP** instead of stdio, so a claude.ai **custom connector** can reach it — while your tokens still never leave this machine's keychain:
+
+```bash
+node bin/gmail-mcp-local.js --http       # serves http://127.0.0.1:8765/<secret>/mcp
+cloudflared tunnel --url http://127.0.0.1:8765
+```
+
+Then in claude.ai: Settings → Connectors → **Add custom connector** → `https://<tunnel-host>/<secret>/mcp`.
+
+- The unguessable `<secret>` path is the only credential — **treat the URL like a password**. It's persisted in `~/.gmail-mcp-local/http-secret`; rotate it by deleting that file.
+- Your machine must be on (server + tunnel running) for the connector to respond.
+- Even `connect_account` works remotely: the Google sign-in opens in the browser of the machine running the server — yours.
+- Overrides: `GMAIL_MCP_HTTP_PORT`, `GMAIL_MCP_HTTP_SECRET` (env or `~/.gmail-mcp-local/config.json`).
+
 ## Appendix: manual install & what's written where
 
 You never *need* to hand-edit JSON — Options A–C above write everything for you. This section exists for transparency, and for clients the auto-setup doesn't cover (VS Code, Windsurf).
@@ -124,7 +140,7 @@ Other knobs: `GMAIL_MCP_SCOPES` (override requested scopes), `GMAIL_MCP_CONFIG` 
 ## Develop
 
 ```bash
-npm test             # 89 tests — no network, no browser, no native deps
+npm test             # 96 tests — no network, no browser, no native deps
 npm run build:mcpb   # build the Claude Desktop extension → dist/mcpb/*.mcpb
 ```
 
