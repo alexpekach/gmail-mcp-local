@@ -166,8 +166,10 @@ test('a file_path whose drive never answers times out with a clear error instead
   const t0 = Date.now();
   await assert.rejects(() => resolveAttachments([{ file_path: p }], { ...POLICY, fsp, ioTimeoutMs: 100 }), (e) => e.code === 'bad_attachment' && /did not respond within 100 ms/.test(e.message));
   assert.ok(Date.now() - t0 < 2000, 'must give up near the timeout, not wait for the drive');
-  // control: the same spy with nothing hung resolves the same file
-  assert.strictEqual((await resolveAttachments([{ file_path: p }], { ...POLICY, fsp: spyFsp(), ioTimeoutMs: 100 }))[0].size_bytes, 1);
+  // control: the same spy with nothing hung resolves the same file. Generous budget:
+  // this half does REAL disk I/O, and 100 ms flaked (1 in ~6-19 runs) under parallel
+  // test files / antivirus. Only the hung case above needs the short timeout.
+  assert.strictEqual((await resolveAttachments([{ file_path: p }], { ...POLICY, fsp: spyFsp(), ioTimeoutMs: 10000 }))[0].size_bytes, 1);
 });
 
 test('a path outside every root is refused with ZERO file-system calls on that path', async () => {
@@ -239,6 +241,33 @@ test('~/.gmail-mcp-local is denied by default even when home is an allowed root 
   const fsp = spyFsp();
   await assert.rejects(() => resolveAttachments([{ file_path: target }], { roots: [os.homedir()], fsp }), /server's own configuration/);
   assert.strictEqual(fsp.touched.filter((x) => x.p === target).length, 0, 'the real secret file must not even be stat-ed');
+});
+
+// ---- follow-ups to PR 4's tracked P2s ---------------------------------------
+
+test('a RELATIVE deny dir is resolved, not silently dropped', async () => {
+  const deny = path.join(ROOT, 'relcfg');
+  fs.mkdirSync(deny, { recursive: true });
+  const secret = writeFile(deny, 'accounts.json', Buffer.from('{}'));
+  const relDeny = path.relative(process.cwd(), deny); // what a relative GMAIL_MCP_CONFIG dirname looks like
+  assert.ok(!path.isAbsolute(relDeny));
+  await assert.rejects(() => resolveAttachments([{ file_path: secret }], { ...POLICY, denyDirs: [relDeny] }), /server's own configuration/);
+  // control: without the deny entry the same file is attachable, so the deny is what refused it
+  assert.strictEqual((await resolveAttachments([{ file_path: secret }], POLICY))[0].size_bytes, 2);
+});
+
+test('malformed data_base64 is refused instead of being silently decoded into other bytes', async () => {
+  const bad = ['eA==junk', 'data:application/pdf;base64,eA==', 'e', 'eA=', 'eA===', 'eA*A', '====', 'eA==eA=='];
+  for (const b of bad) {
+    await assert.rejects(() => resolveAttachments([{ filename: 'x.bin', data_base64: b }], {}), (e) => e.code === 'bad_attachment' && /not valid base64/.test(e.message), `should refuse ${JSON.stringify(b)}`);
+  }
+  // controls: valid standard, url-safe, unpadded, and line-wrapped base64 all decode to the source bytes
+  const src = crypto.randomBytes(301);
+  const good = [src.toString('base64'), src.toString('base64url'), src.toString('base64').replace(/=+$/, ''), src.toString('base64').replace(/.{1,76}/g, (c) => c + '\r\n')];
+  for (const g of good) {
+    const [a] = await resolveAttachments([{ filename: 'x.bin', data_base64: g }], {});
+    assert.strictEqual(a.sha256, sha(src), `should accept ${g.slice(0, 20)}...`);
+  }
 });
 
 // ---- misc --------------------------------------------------------------------

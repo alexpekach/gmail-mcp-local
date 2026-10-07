@@ -55,6 +55,20 @@ const MIME_BY_EXT = {
   '.dxf': 'application/dxf',
 };
 
+// Whole-input base64 grammar (standard or url-safe, padding optional, line breaks
+// allowed). Buffer.from(..., 'base64') never throws: it skips invalid characters
+// and stops at stray padding, so 'eA==junk' or a 'data:...;base64,' prefix would
+// otherwise decode into DIFFERENT bytes and be attached as if they were the input.
+const BASE64_GRAMMAR = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}(?:==)?|[A-Za-z0-9+/]{3}=?)?$/;
+
+function decodeBase64Strict(value, where) {
+  const s = String(value).replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
+  if (!s || !BASE64_GRAMMAR.test(s)) {
+    throw attachmentError(`${where}: data_base64 is not valid base64 (only A-Z a-z 0-9 + / - _ and trailing = padding are allowed; no data: URL prefix). Prefer file_path for real files.`);
+  }
+  return Buffer.from(s, 'base64');
+}
+
 function attachmentError(msg) {
   const e = new Error(msg);
   e.code = 'bad_attachment';
@@ -174,7 +188,9 @@ async function resolveAttachments(items, { roots, denyDirs = [], configPath, max
   if (items === undefined || items === null) return [];
   if (!Array.isArray(items)) throw attachmentError('attachments must be an array');
   const allowRoots = (roots || []).filter((r) => typeof r === 'string' && r && path.isAbsolute(r));
-  const deny = [DEFAULT_DENY_DIR, ...denyDirs].filter((d) => typeof d === 'string' && d && path.isAbsolute(d));
+  // Resolve, never drop: a deny entry silently filtered out would leave its secrets
+  // attachable. (Roots, by contrast, ARE filtered: dropping a root only refuses more.)
+  const deny = [DEFAULT_DENY_DIR, ...denyDirs].filter((d) => typeof d === 'string' && d).map((d) => path.resolve(d));
   const configHint = configPath || path.join(DEFAULT_DENY_DIR, 'config.json');
   const out = [];
   let total = 0;
@@ -194,7 +210,7 @@ async function resolveAttachments(items, { roots, denyDirs = [], configPath, max
       if (!filename) filename = path.basename(item.file_path);
       if (!mimeType) mimeType = mimeFromPath(item.file_path);
     } else {
-      buf = Buffer.from(String(item.data_base64).replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+      buf = decodeBase64Strict(item.data_base64, where);
       if (!filename) throw attachmentError(`${where}: filename is required with data_base64`);
       if (!mimeType) mimeType = mimeFromPath(filename);
     }

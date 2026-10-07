@@ -66,10 +66,13 @@ function loadBundled() {
  * instead of being copied into every MCP client config.
  */
 function loadConfig({ env = process.env, configPath } = {}) {
-  const cp = configPath || env.GMAIL_MCP_CONFIG || path.join(os.homedir(), '.gmail-mcp-local', 'config.json');
+  // Absolute from here on: callers derive secret-holding dirs (attachment deny
+  // list, http-secret, license state) from these, and a relative path would be
+  // read against whatever the cwd happens to be.
+  const cp = path.resolve(configPath || env.GMAIL_MCP_CONFIG || path.join(os.homedir(), '.gmail-mcp-local', 'config.json'));
   const file = { ...loadBundled(), ...readJsonFile(cp) }; // user file overrides bundled defaults
   const merged = mergeConfig(env, file);
-  merged.metadataPath = env.GMAIL_MCP_METADATA || file.metadataPath || path.join(os.homedir(), '.gmail-mcp-local', 'accounts.json');
+  merged.metadataPath = path.resolve(env.GMAIL_MCP_METADATA || file.metadataPath || path.join(os.homedir(), '.gmail-mcp-local', 'accounts.json'));
   merged.configPath = cp;
   return merged;
 }
