@@ -238,7 +238,7 @@ function buildTools() {
       inputSchema: { type: 'object', properties: COMPOSE_PROPS, required: ['account'], additionalProperties: false },
       handler: async (args, deps) => {
         requireArg(args, 'account');
-        const attachments = prepareAttachments(deps, args);
+        const attachments = await prepareAttachments(deps, args);
         const token = await tokenFor(args.account, { custody: deps.custody });
         const { raw, threadId } = await composeRaw(deps, token, args, attachments);
         const body = { message: { raw } };
@@ -264,7 +264,7 @@ function buildTools() {
       inputSchema: { type: 'object', properties: COMPOSE_PROPS, required: ['account'], additionalProperties: false },
       handler: async (args, deps) => {
         requireArg(args, 'account');
-        const attachments = prepareAttachments(deps, args);
+        const attachments = await prepareAttachments(deps, args);
         const token = await tokenFor(args.account, { custody: deps.custody });
         const { raw, threadId } = await composeRaw(deps, token, args, attachments);
         const body = { raw };

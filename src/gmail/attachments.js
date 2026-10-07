@@ -78,37 +78,66 @@ function isInside(root, target) {
   return rel.split(path.sep)[0] !== '..';
 }
 
-function realRoots(roots, fs) {
+// All file I/O is async and time-boxed. This runs inside the MCP server: a sync
+// read of an unmounted network/cloud drive (e.g. a Drive-for-desktop G:) can
+// block forever, freezing EVERY tool until restart. The libuv worker may still
+// hang, but the event loop does not, and the caller gets a clear error.
+const DEFAULT_IO_TIMEOUT_MS = 15000;
+
+function withTimeout(promise, ms, what) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(attachmentError(`${what} did not respond within ${ms} ms (unmounted or offline drive?)`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+async function realRoots(roots, fsp, ioTimeoutMs) {
   const out = [];
   for (const r of roots) {
     if (!r || !path.isAbsolute(r)) continue;
-    try { out.push(fs.realpathSync.native ? fs.realpathSync.native(r) : fs.realpathSync(r)); } catch (_) { /* missing root: skip */ }
+    try { out.push(await withTimeout(fsp.realpath(r), ioTimeoutMs, `attachment root ${r}`)); } catch (_) { /* missing or unreachable root: skip */ }
   }
   return out;
 }
 
-function readFromPath(filePath, { roots, fs }) {
+async function readFromPath(filePath, { roots, fsp, ioTimeoutMs, budgetBytes }) {
   if (typeof filePath !== 'string' || !filePath) throw attachmentError('file_path must be a non-empty string');
   if (!path.isAbsolute(filePath)) throw attachmentError(`file_path must be absolute: ${filePath}`);
+  const allowed = await realRoots(roots, fsp, ioTimeoutMs);
+  // Lexical pre-check BEFORE touching the file system, so a path on a drive that
+  // is not allowed (and may hang) is refused without any I/O on it. Configured
+  // roots and their real paths both count, so either spelling of a root works.
+  const lexical = path.resolve(filePath);
+  if (![...roots, ...allowed].some((root) => path.isAbsolute(root) && isInside(path.resolve(root), lexical))) {
+    throw attachmentError(`file_path is outside the allowed attachment roots: ${filePath}. Allowed: ${allowed.join(', ') || '(none)'}`);
+  }
   let real;
   try {
-    real = fs.realpathSync.native ? fs.realpathSync.native(filePath) : fs.realpathSync(filePath);
+    real = await withTimeout(fsp.realpath(filePath), ioTimeoutMs, `file_path ${filePath}`);
   } catch (e) {
     if (e && e.code === 'ENOENT') throw attachmentError(`file_path not found: ${filePath}`);
+    if (e && e.code === 'bad_attachment') throw e;
     throw attachmentError(`file_path not readable: ${filePath} (${e && e.code ? e.code : e.message})`);
   }
-  const allowed = realRoots(roots, fs);
+  // The real path (symlinks and junctions followed) is what decides.
   if (!allowed.some((root) => isInside(root, real))) {
-    throw attachmentError(`file_path is outside the allowed attachment roots: ${filePath}${real !== filePath ? ` (resolves to ${real})` : ''}. Allowed: ${allowed.join(', ') || '(none)'}`);
+    throw attachmentError(`file_path is outside the allowed attachment roots: ${filePath} (resolves to ${real}). Allowed: ${allowed.join(', ') || '(none)'}`);
   }
-  const st = fs.statSync(real);
+  const st = await withTimeout(fsp.stat(real), ioTimeoutMs, `file_path ${filePath}`);
   if (st.isDirectory()) throw attachmentError(`file_path is a directory, not a file: ${filePath}`);
   if (!st.isFile()) throw attachmentError(`file_path is not a regular file: ${filePath}`);
-  const buf = fs.readFileSync(real);
+  // Cap BEFORE reading, so a huge file is never pulled into memory.
+  if (st.size > budgetBytes) throw capError(st.size, budgetBytes, filePath);
+  const buf = await withTimeout(fsp.readFile(real), ioTimeoutMs, `file_path ${filePath}`);
   if (buf.length !== st.size) {
     throw attachmentError(`short read on ${filePath}: read ${buf.length} bytes but the file is ${st.size} bytes; refusing to attach a truncated file`);
   }
   return { buf, real };
+}
+
+function capError(bytes, budget, what) {
+  return attachmentError(`attachment ${what} is ${bytes} bytes; only ${budget} bytes remain under the attachment cap (Gmail limits a message to 25 MB after base64 encoding). Share large files by link instead.`);
 }
 
 /**
@@ -116,16 +145,17 @@ function readFromPath(filePath, { roots, fs }) {
  * @param {object} [opts]
  * @param {string[]} [opts.roots]          allowed roots for file_path (default [homedir])
  * @param {number}   [opts.maxTotalBytes]  cap on summed attachment bytes
- * @param {object}   [opts.fs]             injectable fs (tests)
- * @returns {Array<{filename, mime_type, inline, data_base64, size_bytes, sha256, source}>}
+ * @param {number}   [opts.ioTimeoutMs]    per-operation file I/O timeout
+ * @param {object}   [opts.fsp]            injectable fs.promises-shaped object (tests)
+ * @returns {Promise<Array<{filename, mime_type, inline, data_base64, size_bytes, sha256, source}>>}
  */
-function resolveAttachments(items, { roots, maxTotalBytes = DEFAULT_MAX_TOTAL_BYTES, fs = nodeFs } = {}) {
+async function resolveAttachments(items, { roots, maxTotalBytes = DEFAULT_MAX_TOTAL_BYTES, ioTimeoutMs = DEFAULT_IO_TIMEOUT_MS, fsp = nodeFs.promises } = {}) {
   if (items === undefined || items === null) return [];
   if (!Array.isArray(items)) throw attachmentError('attachments must be an array');
   const allowRoots = roots && roots.length ? roots : [os.homedir()];
   const out = [];
   let total = 0;
-  items.forEach((item, i) => {
+  for (const [i, item] of items.entries()) {
     const where = `attachments[${i}]`;
     if (!item || typeof item !== 'object') throw attachmentError(`${where} must be an object`);
     const hasData = item.data_base64 !== undefined && item.data_base64 !== null && item.data_base64 !== '';
@@ -137,7 +167,7 @@ function resolveAttachments(items, { roots, maxTotalBytes = DEFAULT_MAX_TOTAL_BY
     let filename = item.filename;
     let mimeType = item.mime_type;
     if (hasPath) {
-      ({ buf } = readFromPath(item.file_path, { roots: allowRoots, fs }));
+      ({ buf } = await readFromPath(item.file_path, { roots: allowRoots, fsp, ioTimeoutMs, budgetBytes: maxTotalBytes - total }));
       if (!filename) filename = path.basename(item.file_path);
       if (!mimeType) mimeType = mimeFromPath(item.file_path);
     } else {
@@ -159,7 +189,7 @@ function resolveAttachments(items, { roots, maxTotalBytes = DEFAULT_MAX_TOTAL_BY
       sha256: crypto.createHash('sha256').update(buf).digest('hex'),
       source: hasPath ? 'file_path' : 'data_base64',
     });
-  });
+  }
   return out;
 }
 
@@ -168,4 +198,4 @@ function attachmentSummary(resolved) {
   return resolved.map(({ filename, mime_type, size_bytes, sha256, source }) => ({ filename, mime_type, size_bytes, sha256, source }));
 }
 
-module.exports = { resolveAttachments, attachmentSummary, mimeFromPath, isInside, DEFAULT_MAX_TOTAL_BYTES };
+module.exports = { resolveAttachments, attachmentSummary, mimeFromPath, isInside, DEFAULT_MAX_TOTAL_BYTES, DEFAULT_IO_TIMEOUT_MS };

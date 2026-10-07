@@ -40,10 +40,10 @@ function decodeParts(raw) {
     });
 }
 
-test('file_path: server reads the file; bytes, filename and mime round-trip into the MIME message', () => {
+test('file_path: server reads the file; bytes, filename and mime round-trip into the MIME message', async () => {
   const pdf = crypto.randomBytes(200 * 1024);
   const p = writeFile(ROOT, 'Quote QT-1.pdf', pdf);
-  const atts = resolveAttachments([{ file_path: p }], POLICY);
+  const atts = await resolveAttachments([{ file_path: p }], POLICY);
   assert.strictEqual(atts[0].filename, 'Quote QT-1.pdf');
   assert.strictEqual(atts[0].mime_type, 'application/pdf');
   assert.strictEqual(atts[0].size_bytes, pdf.length);
@@ -57,50 +57,50 @@ test('file_path: server reads the file; bytes, filename and mime round-trip into
   assert.ok(parts[0].lines.every((l) => l.length <= 76), 'base64 lines must be <= 76 chars (RFC 2045)');
 });
 
-test('file_path: explicit filename / mime_type override the inferred ones', () => {
+test('file_path: explicit filename / mime_type override the inferred ones', async () => {
   const p = writeFile(ROOT, 'raw.bin', Buffer.from('xyz'));
-  const [a] = resolveAttachments([{ file_path: p, filename: 'renamed.txt', mime_type: 'text/plain' }], POLICY);
+  const [a] = await resolveAttachments([{ file_path: p, filename: 'renamed.txt', mime_type: 'text/plain' }], POLICY);
   assert.strictEqual(a.filename, 'renamed.txt');
   assert.strictEqual(a.mime_type, 'text/plain');
 });
 
-test('size cap: total bytes over maxTotalBytes is rejected with a clear error', () => {
+test('size cap: total bytes over maxTotalBytes is rejected with a clear error', async () => {
   const p = writeFile(ROOT, 'big.bin', Buffer.alloc(2048));
-  assert.throws(() => resolveAttachments([{ file_path: p }], { ...POLICY, maxTotalBytes: 1024 }), (e) => e.code === 'bad_attachment' && /exceeds the 1024-byte cap/.test(e.message));
+  await assert.rejects(() => resolveAttachments([{ file_path: p }], { ...POLICY, maxTotalBytes: 1024 }), (e) => e.code === 'bad_attachment' && /only 1024 bytes remain under the attachment cap/.test(e.message));
   // the cap is on the SUM, not per file
   const q = writeFile(ROOT, 'half.bin', Buffer.alloc(600));
-  assert.throws(() => resolveAttachments([{ file_path: q }, { file_path: q }], { ...POLICY, maxTotalBytes: 1024 }), /exceeds/);
-  assert.strictEqual(resolveAttachments([{ file_path: q }], { ...POLICY, maxTotalBytes: 1024 }).length, 1);
+  await assert.rejects(() => resolveAttachments([{ file_path: q }, { file_path: q }], { ...POLICY, maxTotalBytes: 1024 }), /only 424 bytes remain/);
+  assert.strictEqual((await resolveAttachments([{ file_path: q }], { ...POLICY, maxTotalBytes: 1024 })).length, 1);
 });
 
-test('missing file is rejected', () => {
-  assert.throws(() => resolveAttachments([{ file_path: path.join(ROOT, 'nope.pdf') }], POLICY), (e) => e.code === 'bad_attachment' && /not found/.test(e.message));
+test('missing file is rejected', async () => {
+  await assert.rejects(() => resolveAttachments([{ file_path: path.join(ROOT, 'nope.pdf') }], POLICY), (e) => e.code === 'bad_attachment' && /not found/.test(e.message));
 });
 
-test('directory is rejected', () => {
+test('directory is rejected', async () => {
   const d = path.join(ROOT, 'adir');
   fs.mkdirSync(d);
-  assert.throws(() => resolveAttachments([{ file_path: d }], POLICY), /is a directory/);
+  await assert.rejects(() => resolveAttachments([{ file_path: d }], POLICY), /is a directory/);
 });
 
-test('relative path is rejected', () => {
-  assert.throws(() => resolveAttachments([{ file_path: 'root/x.pdf' }], POLICY), /must be absolute/);
+test('relative path is rejected', async () => {
+  await assert.rejects(() => resolveAttachments([{ file_path: 'root/x.pdf' }], POLICY), /must be absolute/);
 });
 
-test('both or neither of data_base64 / file_path is rejected', () => {
+test('both or neither of data_base64 / file_path is rejected', async () => {
   const p = writeFile(ROOT, 'both.txt', Buffer.from('x'));
-  assert.throws(() => resolveAttachments([{ file_path: p, data_base64: 'eA==', filename: 'x' }], POLICY), /exactly one/);
-  assert.throws(() => resolveAttachments([{ filename: 'x', mime_type: 'text/plain' }], POLICY), /one of data_base64 or file_path is required/);
+  await assert.rejects(() => resolveAttachments([{ file_path: p, data_base64: 'eA==', filename: 'x' }], POLICY), /exactly one/);
+  await assert.rejects(() => resolveAttachments([{ filename: 'x', mime_type: 'text/plain' }], POLICY), /one of data_base64 or file_path is required/);
 });
 
-test('file outside the allowed roots is rejected', () => {
+test('file outside the allowed roots is rejected', async () => {
   const p = writeFile(OUTSIDE, 'secret.txt', Buffer.from('s'));
-  assert.throws(() => resolveAttachments([{ file_path: p }], POLICY), /outside the allowed attachment roots/);
+  await assert.rejects(() => resolveAttachments([{ file_path: p }], POLICY), /outside the allowed attachment roots/);
   // and ../ traversal that lexically starts inside ROOT is judged by its real path
-  assert.throws(() => resolveAttachments([{ file_path: path.join(ROOT, '..', 'outside', 'secret.txt') }], POLICY), /outside the allowed/);
+  await assert.rejects(() => resolveAttachments([{ file_path: path.join(ROOT, '..', 'outside', 'secret.txt') }], POLICY), /outside the allowed/);
 });
 
-test('symlink / junction escaping the allowed root is rejected', (t) => {
+test('symlink / junction escaping the allowed root is rejected', async (t) => {
   writeFile(OUTSIDE, 'escape.txt', Buffer.from('e'));
   const link = path.join(ROOT, 'link');
   try {
@@ -109,10 +109,10 @@ test('symlink / junction escaping the allowed root is rejected', (t) => {
     t.skip(`cannot create a link here: ${e.code}`);
     return;
   }
-  assert.throws(() => resolveAttachments([{ file_path: path.join(link, 'escape.txt') }], POLICY), /outside the allowed attachment roots/);
+  await assert.rejects(() => resolveAttachments([{ file_path: path.join(link, 'escape.txt') }], POLICY), /outside the allowed attachment roots/);
 });
 
-test('isInside: sibling with a shared prefix is NOT inside', () => {
+test('isInside: sibling with a shared prefix is NOT inside', async () => {
   assert.strictEqual(isInside(path.join(TMP, 'root'), path.join(TMP, 'root2', 'f')), false);
   assert.strictEqual(isInside(path.join(TMP, 'root'), path.join(TMP, 'root', 'f')), true);
 });
@@ -122,51 +122,106 @@ test('isInside: sibling with a shared prefix is NOT inside', () => {
 // fs wrapper whose readFileSync returns only the first `keep` bytes, the way the
 // 2026-08-03 PDF arrived as 4,500 of 12,915 bytes.
 function truncatingFs(keep) {
-  return { ...fs, realpathSync: fs.realpathSync, statSync: fs.statSync, readFileSync: (p) => fs.readFileSync(p).subarray(0, keep) };
+  return { ...fs.promises, readFile: async (p) => (await fs.promises.readFile(p)).subarray(0, keep) };
 }
 
-test('negative control: a short read is refused (stat size vs bytes read), not attached smaller', () => {
+test('negative control: a short read is refused (stat size vs bytes read), not attached smaller', async () => {
   const src = crypto.randomBytes(12915);
   const p = writeFile(ROOT, 'truncated.pdf', src);
-  assert.throws(() => resolveAttachments([{ file_path: p }], { ...POLICY, fs: truncatingFs(4500) }), /short read .* read 4500 bytes but the file is 12915 bytes/);
+  await assert.rejects(() => resolveAttachments([{ file_path: p }], { ...POLICY, fsp: truncatingFs(4500) }), /short read .* read 4500 bytes but the file is 12915 bytes/);
   // control: the same injected fs path with no truncation passes, so the check above is what fired
-  const ok = resolveAttachments([{ file_path: p }], { ...POLICY, fs: truncatingFs(Infinity) });
+  const ok = await resolveAttachments([{ file_path: p }], { ...POLICY, fsp: truncatingFs(Infinity) });
   assert.strictEqual(ok[0].size_bytes, 12915);
 });
 
-test('negative control: truncated data_base64 is exposed by the size_bytes / sha256 echo', () => {
+test('negative control: truncated data_base64 is exposed by the size_bytes / sha256 echo', async () => {
   const src = crypto.randomBytes(12915);
   const truncatedB64 = src.toString('base64').slice(0, 6000); // 6000 b64 chars = 4500 bytes
-  const [echo] = attachmentSummary(resolveAttachments([{ filename: 'q.pdf', data_base64: truncatedB64 }], POLICY));
+  const [echo] = attachmentSummary(await resolveAttachments([{ filename: 'q.pdf', data_base64: truncatedB64 }], POLICY));
   assert.strictEqual(echo.size_bytes, 4500);
   assert.notStrictEqual(echo.size_bytes, src.length, 'the echo must differ from the source size so a caller can catch it');
   assert.notStrictEqual(echo.sha256, sha(src));
   // control: the intact payload echoes the source size and hash exactly
-  const [good] = attachmentSummary(resolveAttachments([{ filename: 'q.pdf', data_base64: src.toString('base64') }], POLICY));
+  const [good] = attachmentSummary(await resolveAttachments([{ filename: 'q.pdf', data_base64: src.toString('base64') }], POLICY));
   assert.strictEqual(good.size_bytes, src.length);
   assert.strictEqual(good.sha256, sha(src));
 });
 
-// ---- misc --------------------------------------------------------------------
+// ---- the server must never freeze on a hung drive ----------------------------
 
-test('data_base64 still works (url-safe accepted) and requires filename', () => {
-  const [a] = resolveAttachments([{ filename: 'n.txt', data_base64: Buffer.from('hi??').toString('base64url') }], POLICY);
-  assert.strictEqual(Buffer.from(a.data_base64, 'base64').toString(), 'hi??');
-  assert.strictEqual(a.mime_type, 'text/plain');
-  assert.throws(() => resolveAttachments([{ data_base64: 'eA==' }], POLICY), /filename is required/);
+// fsp spy: records every path touched; `hangOn` makes any op on that path never settle.
+function spyFsp({ hangOn } = {}) {
+  const touched = [];
+  const wrap = (name) => (p, ...rest) => {
+    touched.push({ op: name, p: String(p) });
+    if (hangOn && String(p).startsWith(hangOn)) return new Promise(() => {}); // never settles
+    return fs.promises[name](p, ...rest);
+  };
+  return { touched, realpath: wrap('realpath'), stat: wrap('stat'), readFile: wrap('readFile') };
+}
+
+test('a file_path whose drive never answers times out with a clear error instead of hanging', { timeout: 5000 }, async () => {
+  const p = writeFile(ROOT, 'hung.pdf', Buffer.from('x'));
+  const fsp = spyFsp({ hangOn: p });
+  const t0 = Date.now();
+  await assert.rejects(() => resolveAttachments([{ file_path: p }], { ...POLICY, fsp, ioTimeoutMs: 100 }), (e) => e.code === 'bad_attachment' && /did not respond within 100 ms/.test(e.message));
+  assert.ok(Date.now() - t0 < 2000, 'must give up near the timeout, not wait for the drive');
+  // control: the same spy with nothing hung resolves the same file
+  assert.strictEqual((await resolveAttachments([{ file_path: p }], { ...POLICY, fsp: spyFsp(), ioTimeoutMs: 100 }))[0].size_bytes, 1);
 });
 
-test('filename header injection characters are neutralized', () => {
-  const [a] = resolveAttachments([{ filename: 'a"\r\nBcc: x@y.z.txt', data_base64: 'eA==' }], POLICY);
+test('a path outside every root is refused with ZERO file-system calls on that path', async () => {
+  const outside = path.join(OUTSIDE, 'never-touched.pdf'); // need not exist: it must never be looked at
+  const fsp = spyFsp();
+  await assert.rejects(() => resolveAttachments([{ file_path: outside }], { ...POLICY, fsp }), /outside the allowed attachment roots/);
+  assert.deepStrictEqual(fsp.touched.filter((t) => t.p.startsWith(OUTSIDE)), []);
+  // control: an inside path IS touched, so the spy is actually observing
+  const inside = writeFile(ROOT, 'touched.pdf', Buffer.from('y'));
+  const fsp2 = spyFsp();
+  await resolveAttachments([{ file_path: inside }], { ...POLICY, fsp: fsp2 });
+  assert.ok(fsp2.touched.some((t) => t.p === inside));
+});
+
+test('the size cap is applied from stat BEFORE the file is read into memory', async () => {
+  const p = writeFile(ROOT, 'huge.bin', Buffer.alloc(4096));
+  const fsp = spyFsp();
+  await assert.rejects(() => resolveAttachments([{ file_path: p }], { ...POLICY, fsp, maxTotalBytes: 1000 }), /4096 bytes; only 1000 bytes remain/);
+  assert.strictEqual(fsp.touched.filter((t) => t.op === 'readFile').length, 0, 'readFile must not run on an over-cap file');
+  // control: under the cap the same spy does read it
+  const fsp2 = spyFsp();
+  await resolveAttachments([{ file_path: p }], { ...POLICY, fsp: fsp2, maxTotalBytes: 8192 });
+  assert.strictEqual(fsp2.touched.filter((t) => t.op === 'readFile').length, 1);
+});
+
+test('data_base64 over the cap is rejected, and the cap counts file_path + data_base64 together', async () => {
+  const b64of = (n) => Buffer.alloc(n).toString('base64');
+  await assert.rejects(() => resolveAttachments([{ filename: 'big.bin', data_base64: b64of(2048) }], { ...POLICY, maxTotalBytes: 1024 }), /attachments total 2048 bytes exceeds the 1024-byte cap/);
+  const p = writeFile(ROOT, 'mix.bin', Buffer.alloc(600));
+  await assert.rejects(() => resolveAttachments([{ file_path: p }, { filename: 'm.bin', data_base64: b64of(600) }], { ...POLICY, maxTotalBytes: 1024 }), /attachments total 1200 bytes exceeds/);
+  // control: the same mix under the cap passes
+  assert.strictEqual((await resolveAttachments([{ file_path: p }, { filename: 'm.bin', data_base64: b64of(400) }], { ...POLICY, maxTotalBytes: 1024 })).length, 2);
+});
+
+// ---- misc --------------------------------------------------------------------
+
+test('data_base64 still works (url-safe accepted) and requires filename', async () => {
+  const [a] = await resolveAttachments([{ filename: 'n.txt', data_base64: Buffer.from('hi??').toString('base64url') }], POLICY);
+  assert.strictEqual(Buffer.from(a.data_base64, 'base64').toString(), 'hi??');
+  assert.strictEqual(a.mime_type, 'text/plain');
+  await assert.rejects(() => resolveAttachments([{ data_base64: 'eA==' }], POLICY), /filename is required/);
+});
+
+test('filename header injection characters are neutralized', async () => {
+  const [a] = await resolveAttachments([{ filename: 'a"\r\nBcc: x@y.z.txt', data_base64: 'eA==' }], POLICY);
   assert.ok(!/["\r\n]/.test(a.filename));
 });
 
-test('mimeFromPath falls back to application/octet-stream', () => {
+test('mimeFromPath falls back to application/octet-stream', async () => {
   assert.strictEqual(mimeFromPath('C:/x/Plan.DWG'), 'application/acad');
   assert.strictEqual(mimeFromPath('/x/unknown.zzz'), 'application/octet-stream');
 });
 
-test('config: attachmentRoots from file or env (path-delimiter list), maxAttachmentBytes numeric', () => {
+test('config: attachmentRoots from file or env (path-delimiter list), maxAttachmentBytes numeric', async () => {
   assert.deepStrictEqual(mergeConfig({}, { attachmentRoots: ['C:/a', 'C:/b'] }).attachmentRoots, ['C:/a', 'C:/b']);
   assert.deepStrictEqual(mergeConfig({ GMAIL_MCP_ATTACHMENT_ROOTS: ['/a', '/b'].join(path.delimiter) }, {}).attachmentRoots, ['/a', '/b']);
   assert.strictEqual(mergeConfig({}, {}).attachmentRoots, undefined);
@@ -197,7 +252,7 @@ test('send_message: a bad attachment fails BEFORE any token mint or Gmail call',
   assert.strictEqual(gmailCalls, 0);
 });
 
-test('schema: attachment items accept file_path and no longer hard-require data_base64', () => {
+test('schema: attachment items accept file_path and no longer hard-require data_base64', async () => {
   const items = toolByName('create_draft').inputSchema.properties.attachments.items;
   assert.ok(items.properties.file_path);
   assert.ok(!(items.required || []).includes('data_base64'));
