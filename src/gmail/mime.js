@@ -60,7 +60,10 @@ function buildMimeMessage({ to = [], cc = [], bcc = [], subject = '', body = '',
       lines.push('Content-Transfer-Encoding: base64');
       if (att.inline) lines.push(`Content-Id: <${att.filename}>`);
       lines.push('');
-      lines.push(String(att.data_base64).replace(/-/g, '+').replace(/_/g, '/'));
+      // RFC 2045: base64 body lines must not exceed 76 characters.
+      const b64 = String(att.data_base64).replace(/-/g, '+').replace(/_/g, '/').replace(/\s+/g, '');
+      // join, not spread: an 18 MB file is ~330k lines, too many call arguments
+      lines.push((b64.match(/.{1,76}/g) || ['']).join('\r\n'));
     }
     lines.push(`--${boundary}--`);
   } else if (hasBothBodies) {

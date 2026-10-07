@@ -80,6 +80,20 @@ connect_account({ ref: "work" })
 | Write | `create_draft` · `send_draft` · `send_message` |
 | Organize | `label_thread` · `label_message` · `create_label` · `update_label` · `delete_label` · `trash_thread` · `untrash_thread` |
 
+## Attaching files
+
+`create_draft` and `send_message` take attachments **by local path**, so the server reads the file itself and the model never has to emit the bytes:
+
+```
+create_draft({ account: "work", to: ["a@b.com"], subject: "Quote",
+  attachments: [{ file_path: "C:/Users/me/Documents/Quote.pdf" }] })
+```
+
+- Each item needs **exactly one** of `file_path` (preferred) or `data_base64` (small generated content only). `filename` and `mime_type` default from the path.
+- The result echoes every attachment as `{ filename, mime_type, size_bytes, sha256, source }`. Compare `size_bytes` / `sha256` with the source file; `list_thread_attachments` shows the size Gmail stored.
+- Guardrails: the path must be absolute and its real path (symlinks and junctions followed) must sit inside an allowed root; directories are rejected; a read that returns fewer bytes than the file holds is refused rather than attached short; total attachment bytes are capped at 18 MB (Gmail's 25 MB message limit after base64). File contents are never logged.
+- Configure in `~/.gmail-mcp-local/config.json`: `"attachmentRoots": ["C:/Users/me/Documents", "G:/Jobs"]` (default: your home folder) and `"maxAttachmentBytes"`. Env: `GMAIL_MCP_ATTACHMENT_ROOTS` (path-delimiter list), `GMAIL_MCP_MAX_ATTACHMENT_BYTES`.
+
 ## Privacy & security
 
 - **Tokens in the OS keychain** — macOS Keychain / Windows Credential Manager / Linux libsecret. Never written to disk in plaintext; never sent anywhere. (The `.mcpb` extension keeps your client secret in the keychain too.)
@@ -140,7 +154,7 @@ Other knobs: `GMAIL_MCP_SCOPES` (override requested scopes), `GMAIL_MCP_CONFIG` 
 ## Develop
 
 ```bash
-npm test             # 96 tests — no network, no browser, no native deps
+npm test             # 115 tests - no network, no browser, no native deps
 npm run build:mcpb   # build the Claude Desktop extension → dist/mcpb/*.mcpb
 ```
 
@@ -148,7 +162,7 @@ CommonJS, Node ≥ 20. Issues and PRs welcome.
 
 ## Status
 
-**v0.1.0** — local-first core (20 tools) complete and tested; verified live (read + draft) against real Gmail; ships as a one-click installer **and** a Claude Desktop extension (`.mcpb`). Roadmap: re-auth/scope-upgrade UX, signed installers, optional Pro features (shared team mailboxes via a funded backend).
+**v0.2.0** - attachments by local path (`file_path`) with size/sha256 echo. **v0.1.0** - local-first core (20 tools) complete and tested; verified live (read + draft) against real Gmail; ships as a one-click installer **and** a Claude Desktop extension (`.mcpb`). Roadmap: re-auth/scope-upgrade UX, signed installers, optional Pro features (shared team mailboxes via a funded backend).
 
 ## License
 
