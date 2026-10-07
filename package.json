@@ -1,6 +1,6 @@
 {
   "name": "@alepek/gmail-mcp-local",
-  "version": "0.1.0-seam",
+  "version": "0.2.0-seam",
   "private": true,
   "description": "Local-first Gmail MCP server for Claude & Cursor — Gmail tools with OAuth tokens that never leave your machine (stored in the OS keychain).",
   "license": "MIT",

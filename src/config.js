@@ -11,6 +11,14 @@ function parseScopes(s) {
   return l.length ? l : undefined;
 }
 
+// Attachment roots: array in config.json, or a path-delimiter list in env
+// (';' on Windows, ':' elsewhere). Unset -> the server defaults to the home dir.
+function parseRoots(v) {
+  if (!v) return undefined;
+  const l = (Array.isArray(v) ? v : String(v).split(path.delimiter)).map((x) => String(x).trim()).filter(Boolean);
+  return l.length ? l : undefined;
+}
+
 /**
  * Merge env over a config object (env wins). Pure — unit-testable.
  * A placeholder secret (still containing "PASTE") is treated as unset, so an
@@ -29,6 +37,8 @@ function mergeConfig(env = {}, file = {}) {
     renewUrl: env.GMAIL_MCP_RENEW_URL || file.renewUrl || undefined,
     httpPort: env.GMAIL_MCP_HTTP_PORT || file.httpPort || undefined,
     httpSecret: env.GMAIL_MCP_HTTP_SECRET || file.httpSecret || undefined,
+    attachmentRoots: parseRoots(env.GMAIL_MCP_ATTACHMENT_ROOTS) || parseRoots(file.attachmentRoots),
+    maxAttachmentBytes: Number(env.GMAIL_MCP_MAX_ATTACHMENT_BYTES || file.maxAttachmentBytes) || undefined,
   };
 }
 

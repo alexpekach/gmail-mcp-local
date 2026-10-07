@@ -3,6 +3,7 @@
 const { tokenFor } = require('../tokenFor');
 const { parseMessage } = require('../gmail/parse');
 const { buildMimeMessage, resolveReplyHeaders } = require('../gmail/mime');
+const { resolveAttachments, attachmentSummary } = require('../gmail/attachments');
 
 /**
  * MCP tool registry for the local-first v1.
@@ -41,15 +42,16 @@ const ACCOUNT_PROP = { type: 'string', description: 'A connected account ref (se
 // attachment payload schema reused by create_draft / send_message
 const ATTACHMENTS_SCHEMA = {
   type: 'array',
+  description: 'Each item needs EXACTLY ONE of file_path (preferred: the server reads the file, any size up to the cap) or data_base64. The result echoes each attachment filename, size_bytes and sha256 - compare them with the source file.',
   items: {
     type: 'object',
     properties: {
-      filename: { type: 'string' },
-      mime_type: { type: 'string', description: 'e.g. application/pdf' },
-      data_base64: { type: 'string', description: 'Base64-encoded bytes (standard or url-safe).' },
+      file_path: { type: 'string', description: 'Absolute local path to the file. Must resolve inside a folder the user listed in attachmentRoots (~/.gmail-mcp-local/config.json); with none listed, file_path is refused. filename and mime_type default from the path.' },
+      data_base64: { type: 'string', description: 'Base64-encoded bytes (standard or url-safe). Only for small generated content; prefer file_path for real files.' },
+      filename: { type: 'string', description: 'Required with data_base64; defaults to the file name with file_path.' },
+      mime_type: { type: 'string', description: 'e.g. application/pdf. Inferred from the extension when omitted.' },
       inline: { type: 'boolean', description: 'Attach inline; reference via cid:filename in html_body.' },
     },
-    required: ['filename', 'mime_type', 'data_base64'],
     additionalProperties: false,
   },
 };
@@ -67,8 +69,14 @@ const COMPOSE_PROPS = {
   attachments: ATTACHMENTS_SCHEMA,
 };
 
-async function composeRaw(deps, token, args) {
-  const { account, reply_to_message_id, attachments, ...rest } = args;
+// Validate and read attachments BEFORE any token or Gmail call, so a bad path
+// fails fast and nothing half-built reaches the mailbox.
+function prepareAttachments(deps, args) {
+  return resolveAttachments(args.attachments, deps.attachmentPolicy || {});
+}
+
+async function composeRaw(deps, token, args, attachments) {
+  const { account, reply_to_message_id, attachments: _ignored, ...rest } = args;
   const replyCtx = await resolveReplyHeaders(deps.gmail, token, reply_to_message_id);
   const raw = buildMimeMessage({ ...rest, attachments, in_reply_to: replyCtx.in_reply_to, references: replyCtx.references });
   return { raw, threadId: replyCtx.thread_id };
@@ -226,16 +234,17 @@ function buildTools() {
     // ───── write (gmail.compose) ───────────────────────────────────────────
     {
       name: 'create_draft',
-      description: 'Create a Gmail draft. Returns {draft_id, message_id, thread_id}. For replies pass reply_to_message_id. Requires gmail.compose scope.',
+      description: 'Create a Gmail draft. Returns {draft_id, message_id, thread_id, attachments[{filename, size_bytes, sha256}]}. Attach files by absolute file_path. For replies pass reply_to_message_id. Requires gmail.compose scope.',
       inputSchema: { type: 'object', properties: COMPOSE_PROPS, required: ['account'], additionalProperties: false },
       handler: async (args, deps) => {
         requireArg(args, 'account');
+        const attachments = await prepareAttachments(deps, args);
         const token = await tokenFor(args.account, { custody: deps.custody });
-        const { raw, threadId } = await composeRaw(deps, token, args);
+        const { raw, threadId } = await composeRaw(deps, token, args, attachments);
         const body = { message: { raw } };
         if (threadId) body.message.threadId = threadId;
         const data = await deps.gmail.post(token, '/users/me/drafts', body);
-        return { draft_id: data.id, message_id: (data.message || {}).id, thread_id: (data.message || {}).threadId };
+        return { draft_id: data.id, message_id: (data.message || {}).id, thread_id: (data.message || {}).threadId, attachments: attachmentSummary(attachments) };
       },
     },
     {
@@ -251,16 +260,17 @@ function buildTools() {
     },
     {
       name: 'send_message',
-      description: 'Compose AND send in one step (no draft review). Same payload as create_draft. Returns {message_id, thread_id, label_ids}. Requires gmail.compose scope.',
+      description: 'Compose AND send in one step (no draft review). Same payload as create_draft. Returns {message_id, thread_id, label_ids, attachments[{filename, size_bytes, sha256}]}. Requires gmail.compose scope.',
       inputSchema: { type: 'object', properties: COMPOSE_PROPS, required: ['account'], additionalProperties: false },
       handler: async (args, deps) => {
         requireArg(args, 'account');
+        const attachments = await prepareAttachments(deps, args);
         const token = await tokenFor(args.account, { custody: deps.custody });
-        const { raw, threadId } = await composeRaw(deps, token, args);
+        const { raw, threadId } = await composeRaw(deps, token, args, attachments);
         const body = { raw };
         if (threadId) body.threadId = threadId;
         const data = await deps.gmail.post(token, '/users/me/messages/send', body);
-        return { message_id: data.id, thread_id: data.threadId, label_ids: data.labelIds || [] };
+        return { message_id: data.id, thread_id: data.threadId, label_ids: data.labelIds || [], attachments: attachmentSummary(attachments) };
       },
     },
 

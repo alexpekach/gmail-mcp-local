@@ -57,7 +57,15 @@ function main() {
     process.stderr.write(`[gmail-mcp-local] license gate ON${cfg.licenseKey ? '' : ' — WARN: no licenseKey set'}\n`);
   }
 
-  const deps = { custody: gc.provider, connect: gc.connect, gmail, licenseGate };
+  // file_path attachments are OFF until attachmentRoots is configured (fail closed).
+  // The config and metadata folders hold this server's secrets: never attachable.
+  const attachmentPolicy = {
+    roots: cfg.attachmentRoots,
+    denyDirs: [path.dirname(cfg.configPath), path.dirname(cfg.metadataPath)],
+    configPath: cfg.configPath,
+    maxTotalBytes: cfg.maxAttachmentBytes,
+  };
+  const deps = { custody: gc.provider, connect: gc.connect, gmail, licenseGate, attachmentPolicy };
   const server = createMcpServer({ tools, deps, serverInfo: { name: 'gmail-mcp-local', version: pkg.version } });
 
   // --http [port] / GMAIL_MCP_HTTP_PORT: serve MCP over Streamable HTTP instead
