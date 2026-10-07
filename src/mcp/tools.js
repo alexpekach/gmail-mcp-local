@@ -46,7 +46,7 @@ const ATTACHMENTS_SCHEMA = {
   items: {
     type: 'object',
     properties: {
-      file_path: { type: 'string', description: 'Absolute local path to the file. Must resolve inside an allowed root (default: your home folder; set attachmentRoots in ~/.gmail-mcp-local/config.json). filename and mime_type default from the path.' },
+      file_path: { type: 'string', description: 'Absolute local path to the file. Must resolve inside a folder the user listed in attachmentRoots (~/.gmail-mcp-local/config.json); with none listed, file_path is refused. filename and mime_type default from the path.' },
       data_base64: { type: 'string', description: 'Base64-encoded bytes (standard or url-safe). Only for small generated content; prefer file_path for real files.' },
       filename: { type: 'string', description: 'Required with data_base64; defaults to the file name with file_path.' },
       mime_type: { type: 'string', description: 'e.g. application/pdf. Inferred from the extension when omitted.' },

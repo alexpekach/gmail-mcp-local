@@ -82,7 +82,15 @@ connect_account({ ref: "work" })
 
 ## Attaching files
 
-`create_draft` and `send_message` take attachments **by local path**, so the server reads the file itself and the model never has to emit the bytes:
+`create_draft` and `send_message` take attachments **by local path**, so the server reads the file itself and the model never has to emit the bytes.
+
+**Off until you opt in.** `file_path` is refused until you name the folders it may read from, in `~/.gmail-mcp-local/config.json`:
+
+```json
+{ "attachmentRoots": ["C:/Users/me/Documents", "C:/Users/me/Downloads"] }
+```
+
+Restart the server after editing. Keep the list narrow: anything that can call `send_message` - a tunneled connector, or a prompt-injected email the model obeys - can attach any file inside these folders. Never list your whole home folder. The server's own `~/.gmail-mcp-local` folder (OAuth client secret, connector secret) is always refused, even inside a listed folder.
 
 ```
 create_draft({ account: "work", to: ["a@b.com"], subject: "Quote",
@@ -91,8 +99,9 @@ create_draft({ account: "work", to: ["a@b.com"], subject: "Quote",
 
 - Each item needs **exactly one** of `file_path` (preferred) or `data_base64` (small generated content only). `filename` and `mime_type` default from the path.
 - The result echoes every attachment as `{ filename, mime_type, size_bytes, sha256, source }`. Compare `size_bytes` / `sha256` with the source file; `list_thread_attachments` shows the size Gmail stored.
-- Guardrails: the path must be absolute and its real path (symlinks and junctions followed) must sit inside an allowed root; directories are rejected; a read that returns fewer bytes than the file holds is refused rather than attached short; total attachment bytes are capped at 18 MB (Gmail's 25 MB message limit after base64). File contents are never logged.
-- Configure in `~/.gmail-mcp-local/config.json`: `"attachmentRoots": ["C:/Users/me/Documents", "G:/Jobs"]` (default: your home folder) and `"maxAttachmentBytes"`. Env: `GMAIL_MCP_ATTACHMENT_ROOTS` (path-delimiter list), `GMAIL_MCP_MAX_ATTACHMENT_BYTES`.
+- Guardrails: the path must be absolute and its real path (symlinks and junctions followed) must sit inside a listed folder; directories are rejected; a read that returns fewer bytes than the file holds is refused rather than attached short; total attachment bytes are capped at 18 MB (Gmail's 25 MB message limit after base64), checked before reading. File I/O is time-boxed (15 s), so an offline drive cannot freeze the server. File contents are never logged.
+- Other settings: `"maxAttachmentBytes"` in the same file. Env equivalents: `GMAIL_MCP_ATTACHMENT_ROOTS` (path-delimiter list: `;` on Windows), `GMAIL_MCP_MAX_ATTACHMENT_BYTES`.
+- Known limit: the folder check and the read are separate steps, so a process that can already write inside a listed folder could swap a link in between. Node has no portable way to close that window; keep listed folders ones only you write to.
 
 ## Privacy & security
 
@@ -154,7 +163,7 @@ Other knobs: `GMAIL_MCP_SCOPES` (override requested scopes), `GMAIL_MCP_CONFIG` 
 ## Develop
 
 ```bash
-npm test             # 115 tests - no network, no browser, no native deps
+npm test             # 122 tests - no network, no browser, no native deps
 npm run build:mcpb   # build the Claude Desktop extension → dist/mcpb/*.mcpb
 ```
 

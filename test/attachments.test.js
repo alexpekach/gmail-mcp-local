@@ -202,6 +202,45 @@ test('data_base64 over the cap is rejected, and the cap counts file_path + data_
   assert.strictEqual((await resolveAttachments([{ file_path: p }, { filename: 'm.bin', data_base64: b64of(400) }], { ...POLICY, maxTotalBytes: 1024 })).length, 2);
 });
 
+// ---- fail closed: no roots = no file reads; the server's own secrets never ----
+
+test('no attachment roots configured: every file_path is refused, naming the config key, with ZERO fs calls', async () => {
+  const p = writeFile(ROOT, 'any.pdf', Buffer.from('z'));
+  for (const policy of [{}, { roots: [] }, { roots: undefined }, { roots: [''] }]) {
+    const fsp = spyFsp();
+    await assert.rejects(() => resolveAttachments([{ file_path: p }], { ...policy, fsp }), (e) => e.code === 'bad_attachment' && /no attachment roots are configured/.test(e.message) && /attachmentRoots/.test(e.message));
+    assert.deepStrictEqual(fsp.touched, [], 'refusal must happen before any file-system access');
+  }
+  // control: data_base64 still works with no roots (it reads no files)
+  assert.strictEqual((await resolveAttachments([{ filename: 'n.txt', data_base64: 'eA==' }], {}))[0].size_bytes, 1);
+  // control: the same file IS accepted once a root is configured
+  assert.strictEqual((await resolveAttachments([{ file_path: p }], POLICY))[0].size_bytes, 1);
+});
+
+test('a denied dir (the server config) is refused even inside an allowed root, lexically and via a link', async (t) => {
+  const deny = path.join(ROOT, 'cfgdir');
+  fs.mkdirSync(deny, { recursive: true });
+  const secret = writeFile(deny, 'http-secret', Buffer.from('s3cret'));
+  const policy = { ...POLICY, denyDirs: [deny] };
+  const fsp = spyFsp();
+  await assert.rejects(() => resolveAttachments([{ file_path: secret }], { ...policy, fsp }), /server's own configuration/);
+  assert.strictEqual(fsp.touched.filter((x) => x.op === 'readFile').length, 0);
+  // via a junction inside the root that points at the denied dir: only the REAL path reveals it
+  const alias = path.join(ROOT, 'alias-to-cfg');
+  try { fs.symlinkSync(deny, alias, 'junction'); } catch (e) { t.skip(`cannot create a link here: ${e.code}`); return; }
+  await assert.rejects(() => resolveAttachments([{ file_path: path.join(alias, 'http-secret') }], policy), /server's own configuration/);
+  // control: a sibling file in the same root passes under the same policy
+  const ok = writeFile(ROOT, 'fine.txt', Buffer.from('ok'));
+  assert.strictEqual((await resolveAttachments([{ file_path: ok }], policy))[0].size_bytes, 2);
+});
+
+test('~/.gmail-mcp-local is denied by default even when home is an allowed root (and is never read)', async () => {
+  const target = path.join(os.homedir(), '.gmail-mcp-local', 'config.json');
+  const fsp = spyFsp();
+  await assert.rejects(() => resolveAttachments([{ file_path: target }], { roots: [os.homedir()], fsp }), /server's own configuration/);
+  assert.strictEqual(fsp.touched.filter((x) => x.p === target).length, 0, 'the real secret file must not even be stat-ed');
+});
+
 // ---- misc --------------------------------------------------------------------
 
 test('data_base64 still works (url-safe accepted) and requires filename', async () => {

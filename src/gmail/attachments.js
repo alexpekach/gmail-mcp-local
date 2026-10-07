@@ -13,8 +13,9 @@ const path = require('node:path');
  *   - file_path:   an absolute local path the SERVER reads itself
  *
  * file_path guardrails: absolute only; resolved to its real path (symlinks and
- * junctions followed) and that real path must sit inside an allowed root (default:
- * the user's home dir); directories and non-regular files are rejected; the bytes
+ * junctions followed) and that real path must sit inside a root the operator listed
+ * (NO default: with none listed, file_path is refused) and outside the server's own
+ * config folder; directories and non-regular files are rejected; the bytes
  * read must equal stat.size (a short read is an error, never a smaller attachment);
  * total attachment bytes are capped. File contents are never logged.
  *
@@ -84,6 +85,10 @@ function isInside(root, target) {
 // hang, but the event loop does not, and the caller gets a clear error.
 const DEFAULT_IO_TIMEOUT_MS = 15000;
 
+// The server's own folder holds its OAuth client secret and HTTP connector secret.
+// It is never attachable, whatever roots are configured.
+const DEFAULT_DENY_DIR = path.join(os.homedir(), '.gmail-mcp-local');
+
 function withTimeout(promise, ms, what) {
   let timer;
   const timeout = new Promise((_, reject) => {
@@ -101,14 +106,25 @@ async function realRoots(roots, fsp, ioTimeoutMs) {
   return out;
 }
 
-async function readFromPath(filePath, { roots, fsp, ioTimeoutMs, budgetBytes }) {
+function deniedError(filePath, real) {
+  return attachmentError(`file_path is inside the server's own configuration folder and is never attached: ${filePath}${real && real !== filePath ? ` (resolves to ${real})` : ''}`);
+}
+
+async function readFromPath(filePath, { roots, denyDirs, configHint, fsp, ioTimeoutMs, budgetBytes }) {
   if (typeof filePath !== 'string' || !filePath) throw attachmentError('file_path must be a non-empty string');
   if (!path.isAbsolute(filePath)) throw attachmentError(`file_path must be absolute: ${filePath}`);
+  // FAIL CLOSED: with no roots configured the server reads no files at all. Any
+  // caller of send_message (a tunneled connector, or a prompt-injected email the
+  // model obeys) could otherwise attach ~/.ssh keys or this server's own secrets.
+  if (!roots.length) {
+    throw attachmentError(`file_path is disabled: no attachment roots are configured. Add "attachmentRoots": ["C:/Users/you/Documents"] (the folders you want to attach from) to ${configHint}, or set GMAIL_MCP_ATTACHMENT_ROOTS, then restart the server. data_base64 still works.`);
+  }
+  const lexical = path.resolve(filePath);
+  if (denyDirs.some((d) => isInside(path.resolve(d), lexical))) throw deniedError(filePath);
   const allowed = await realRoots(roots, fsp, ioTimeoutMs);
   // Lexical pre-check BEFORE touching the file system, so a path on a drive that
   // is not allowed (and may hang) is refused without any I/O on it. Configured
   // roots and their real paths both count, so either spelling of a root works.
-  const lexical = path.resolve(filePath);
   if (![...roots, ...allowed].some((root) => path.isAbsolute(root) && isInside(path.resolve(root), lexical))) {
     throw attachmentError(`file_path is outside the allowed attachment roots: ${filePath}. Allowed: ${allowed.join(', ') || '(none)'}`);
   }
@@ -124,6 +140,9 @@ async function readFromPath(filePath, { roots, fsp, ioTimeoutMs, budgetBytes }) 
   if (!allowed.some((root) => isInside(root, real))) {
     throw attachmentError(`file_path is outside the allowed attachment roots: ${filePath} (resolves to ${real}). Allowed: ${allowed.join(', ') || '(none)'}`);
   }
+  // A link inside a root can still lead into the denied folder: judge the real path too.
+  const realDeny = await realRoots(denyDirs, fsp, ioTimeoutMs);
+  if ([...denyDirs, ...realDeny].some((d) => isInside(path.resolve(d), real))) throw deniedError(filePath, real);
   const st = await withTimeout(fsp.stat(real), ioTimeoutMs, `file_path ${filePath}`);
   if (st.isDirectory()) throw attachmentError(`file_path is a directory, not a file: ${filePath}`);
   if (!st.isFile()) throw attachmentError(`file_path is not a regular file: ${filePath}`);
@@ -143,16 +162,20 @@ function capError(bytes, budget, what) {
 /**
  * @param {Array} items  attachment items from the tool args
  * @param {object} [opts]
- * @param {string[]} [opts.roots]          allowed roots for file_path (default [homedir])
+ * @param {string[]} [opts.roots]          allowed roots for file_path. NO default: unset/empty = file_path refused
+ * @param {string[]} [opts.denyDirs]       never attached from, even inside a root (always includes ~/.gmail-mcp-local)
+ * @param {string}   [opts.configPath]     named in the "no roots" error so the fix is one step
  * @param {number}   [opts.maxTotalBytes]  cap on summed attachment bytes
  * @param {number}   [opts.ioTimeoutMs]    per-operation file I/O timeout
  * @param {object}   [opts.fsp]            injectable fs.promises-shaped object (tests)
  * @returns {Promise<Array<{filename, mime_type, inline, data_base64, size_bytes, sha256, source}>>}
  */
-async function resolveAttachments(items, { roots, maxTotalBytes = DEFAULT_MAX_TOTAL_BYTES, ioTimeoutMs = DEFAULT_IO_TIMEOUT_MS, fsp = nodeFs.promises } = {}) {
+async function resolveAttachments(items, { roots, denyDirs = [], configPath, maxTotalBytes = DEFAULT_MAX_TOTAL_BYTES, ioTimeoutMs = DEFAULT_IO_TIMEOUT_MS, fsp = nodeFs.promises } = {}) {
   if (items === undefined || items === null) return [];
   if (!Array.isArray(items)) throw attachmentError('attachments must be an array');
-  const allowRoots = roots && roots.length ? roots : [os.homedir()];
+  const allowRoots = (roots || []).filter((r) => typeof r === 'string' && r && path.isAbsolute(r));
+  const deny = [DEFAULT_DENY_DIR, ...denyDirs].filter((d) => typeof d === 'string' && d && path.isAbsolute(d));
+  const configHint = configPath || path.join(DEFAULT_DENY_DIR, 'config.json');
   const out = [];
   let total = 0;
   for (const [i, item] of items.entries()) {
@@ -167,7 +190,7 @@ async function resolveAttachments(items, { roots, maxTotalBytes = DEFAULT_MAX_TO
     let filename = item.filename;
     let mimeType = item.mime_type;
     if (hasPath) {
-      ({ buf } = await readFromPath(item.file_path, { roots: allowRoots, fsp, ioTimeoutMs, budgetBytes: maxTotalBytes - total }));
+      ({ buf } = await readFromPath(item.file_path, { roots: allowRoots, denyDirs: deny, configHint, fsp, ioTimeoutMs, budgetBytes: maxTotalBytes - total }));
       if (!filename) filename = path.basename(item.file_path);
       if (!mimeType) mimeType = mimeFromPath(item.file_path);
     } else {
