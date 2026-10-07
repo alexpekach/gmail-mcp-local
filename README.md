@@ -97,7 +97,7 @@ create_draft({ account: "work", to: ["a@b.com"], subject: "Quote",
   attachments: [{ file_path: "C:/Users/me/Documents/Quote.pdf" }] })
 ```
 
-- Each item needs **exactly one** of `file_path` (preferred) or `data_base64` (small generated content only). `filename` and `mime_type` default from the path.
+- Each item needs **exactly one** of `file_path` (preferred) or `data_base64` (small generated content only; it must be valid standard or url-safe base64, with no `data:` prefix, or it is refused rather than decoded into different bytes). `filename` and `mime_type` default from the path.
 - The result echoes every attachment as `{ filename, mime_type, size_bytes, sha256, source }`. Compare `size_bytes` / `sha256` with the source file; `list_thread_attachments` shows the size Gmail stored.
 - Guardrails: the path must be absolute and its real path (symlinks and junctions followed) must sit inside a listed folder; directories are rejected; a read that returns fewer bytes than the file holds is refused rather than attached short; total attachment bytes are capped at 18 MB (Gmail's 25 MB message limit after base64), checked before reading. File I/O is time-boxed (15 s), so an offline drive cannot freeze the server. File contents are never logged.
 - Other settings: `"maxAttachmentBytes"` in the same file. Env equivalents: `GMAIL_MCP_ATTACHMENT_ROOTS` (path-delimiter list: `;` on Windows), `GMAIL_MCP_MAX_ATTACHMENT_BYTES`.

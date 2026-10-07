@@ -53,3 +53,11 @@ test('loadConfig tolerates a UTF-8 BOM in the config file (PowerShell Set-Conten
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('loadConfig resolves RELATIVE config/metadata paths to absolute (callers derive deny dirs from them)', () => {
+  const c = loadConfig({ env: { GMAIL_MCP_CONFIG: 'rel-cfg/config.json', GMAIL_MCP_METADATA: 'rel-meta/accounts.json' } });
+  assert.ok(path.isAbsolute(c.configPath), c.configPath);
+  assert.ok(path.isAbsolute(c.metadataPath), c.metadataPath);
+  assert.strictEqual(c.configPath, path.resolve('rel-cfg/config.json'));
+  assert.strictEqual(c.metadataPath, path.resolve('rel-meta/accounts.json'));
+});
